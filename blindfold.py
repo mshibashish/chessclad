@@ -7,6 +7,7 @@ import random
 import shutil
 import sys
 import time
+from dataclasses import dataclass
 
 import chess
 import chess.engine
@@ -158,6 +159,109 @@ def result_message(board, human):
     return f"{who} by {outcome.termination.name.lower()}."
 
 
+@dataclass
+class Game:
+    board: chess.Board
+    human: chess.Color
+    show_moves: bool
+    autoclear: bool
+    clear_delay: float
+    colors: bool
+    coords: bool
+    flipped: bool = False
+
+
+def cmd_help(g, cmd, arg):
+    print(HELP)
+
+
+def cmd_autoclear(g, cmd, arg):
+    try:
+        if arg == "":
+            g.autoclear = not g.autoclear
+        elif arg in ("on", "off"):
+            g.autoclear = arg == "on"
+        else:
+            g.clear_delay = max(0.0, float(arg))
+            g.autoclear = True
+    except ValueError:
+        print("Usage: autoclear [on|off|SECONDS]")
+        return
+    print(f"Autoclear {f'on ({g.clear_delay:g}s)' if g.autoclear else 'off'}.")
+
+
+def cmd_moves(g, cmd, arg):
+    print(move_list(g.board))
+    if g.autoclear:
+        linger(g.clear_delay)
+
+
+def cmd_show(g, cmd, arg):
+    g.show_moves = True
+    print("Move list shown.")
+
+
+def cmd_hide(g, cmd, arg):
+    g.show_moves = False
+    print("Move list hidden.")
+
+
+def cmd_board(g, cmd, arg):
+    if cmd == "flip":
+        g.flipped = not g.flipped
+    # the player's color sits at the bottom unless flipped; "board flip" flips just this peek
+    bottom = g.human != (g.flipped != (cmd == "board flip"))
+    print(render_board(g.board, bottom, g.colors, g.coords))
+    if g.autoclear:
+        linger(g.clear_delay)
+
+
+def cmd_toggle(g, cmd, arg):
+    name = cmd.split()[0]
+    new = parse_toggle(getattr(g, name), arg)
+    if new is None:
+        print(f"Usage: {name} [on|off]")
+        return
+    setattr(g, name, new)
+    print(f"Board {name} {'on' if new else 'off'}.")
+
+
+def cmd_undo(g, cmd, arg):
+    if len(g.board.move_stack) < 2:
+        print("Nothing to undo.")
+    else:
+        g.board.pop()
+        g.board.pop()
+        print(f"Took back. {move_list(g.board) if g.show_moves else ''}".rstrip())
+        if g.autoclear and g.show_moves:
+            linger(g.clear_delay)
+
+
+def cmd_resign(g, cmd, arg):
+    print("You resigned.")
+    return True  # ends the game
+
+
+# whole-line commands, then commands that take an argument after the first word;
+# a handler returns True to end the game
+COMMANDS = {
+    "help": cmd_help,
+    "moves": cmd_moves,
+    "show": cmd_show,
+    "hide": cmd_hide,
+    "board": cmd_board,
+    "board flip": cmd_board,
+    "flip": cmd_board,
+    "undo": cmd_undo,
+    "resign": cmd_resign,
+}
+ARG_COMMANDS = {
+    "autoclear": cmd_autoclear,
+    "colors": cmd_toggle,
+    "coords": cmd_toggle,
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--color", choices=["white", "black", "random"], default="random")
@@ -176,14 +280,17 @@ def main():
         parser.error("Stockfish not found; install it (brew install stockfish) or pass --engine")
 
     color = random.choice(["white", "black"]) if args.color == "random" else args.color
-    human = chess.WHITE if color == "white" else chess.BLACK
-    show_moves = args.show_moves
     autoclear = args.autoclear is not None
-    clear_delay = args.autoclear if autoclear else DEFAULT_CLEAR_DELAY
-    colors = args.colors
-    coords = args.coords
-    flipped = False
-    board = chess.Board()
+    g = Game(
+        board=chess.Board(),
+        human=chess.WHITE if color == "white" else chess.BLACK,
+        show_moves=args.show_moves,
+        autoclear=autoclear,
+        clear_delay=args.autoclear if autoclear else DEFAULT_CLEAR_DELAY,
+        colors=args.colors,
+        coords=args.coords,
+    )
+    board = g.board
 
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
     engine.configure({"Skill Level": max(0, min(20, args.level))})
@@ -191,16 +298,16 @@ def main():
 
     try:
         while not board.is_game_over(claim_draw=True):
-            if board.turn != human:
+            if board.turn != g.human:
                 move = engine.play(board, chess.engine.Limit(time=args.think)).move
                 san = board.san(move)
                 board.push(move)
                 number = board.fullmove_number - (1 if board.turn == chess.WHITE else 0)
-                print(f"engine: {number}.{'..' if human == chess.WHITE else ''} {san}")
-                if show_moves:
+                print(f"engine: {number}.{'..' if g.human == chess.WHITE else ''} {san}")
+                if g.show_moves:
                     print(move_list(board))
-                if autoclear and not board.is_game_over(claim_draw=True):
-                    linger(clear_delay)
+                if g.autoclear and not board.is_game_over(claim_draw=True):
+                    linger(g.clear_delay)
                 continue
 
             text = input("you: ").strip()
@@ -210,71 +317,18 @@ def main():
             elif cmd in ("quit", "exit"):
                 return
 
-            if cmd == "help":
-                print(HELP)
-            elif cmd.split()[0] == "autoclear":
-                arg = cmd.partition(" ")[2].strip()
-                try:
-                    if arg == "":
-                        autoclear = not autoclear
-                    elif arg in ("on", "off"):
-                        autoclear = arg == "on"
-                    else:
-                        clear_delay = max(0.0, float(arg))
-                        autoclear = True
-                except ValueError:
-                    print("Usage: autoclear [on|off|SECONDS]")
-                    continue
-                print(f"Autoclear {f'on ({clear_delay:g}s)' if autoclear else 'off'}.")
-            elif cmd == "moves":
-                print(move_list(board))
-                if autoclear:
-                    linger(clear_delay)
-            elif cmd == "show":
-                show_moves = True
-                print("Move list shown.")
-            elif cmd == "hide":
-                show_moves = False
-                print("Move list hidden.")
-            elif cmd in ("board", "board flip", "flip"):
-                if cmd == "flip":
-                    flipped = not flipped
-                # the player's color sits at the bottom unless flipped; "board flip" flips just this peek
-                bottom = human != (flipped != (cmd == "board flip"))
-                print(render_board(board, bottom, colors, coords))
-                if autoclear:
-                    linger(clear_delay)
-            elif cmd.split()[0] in ("colors", "coords"):
-                name = cmd.split()[0]
-                new = parse_toggle(colors if name == "colors" else coords, cmd.partition(" ")[2].strip())
-                if new is None:
-                    print(f"Usage: {name} [on|off]")
-                    continue
-                if name == "colors":
-                    colors = new
-                else:
-                    coords = new
-                print(f"Board {name} {'on' if new else 'off'}.")
-            elif cmd == "undo":
-                if len(board.move_stack) < 2:
-                    print("Nothing to undo.")
-                else:
-                    board.pop()
-                    board.pop()
-                    print(f"Took back. {move_list(board) if show_moves else ''}".rstrip())
-                    if autoclear and show_moves:
-                        linger(clear_delay)
-            elif cmd == "resign":
-                print("You resigned.")
-                break
-            else:
-                move = parse_move(board, text)
-                if move is None:
-                    print("Illegal or unrecognised move.")
-                    continue
-                board.push(move)
+            handler = COMMANDS.get(cmd) or ARG_COMMANDS.get(cmd.split()[0])
+            if handler:
+                if handler(g, cmd, cmd.partition(" ")[2].strip()):
+                    break
+                continue
+            move = parse_move(board, text)
+            if move is None:
+                print("Illegal or unrecognised move.")
+                continue
+            board.push(move)
         else:
-            print(result_message(board, human))
+            print(result_message(board, g.human))
 
         print(f"\nFinal moves: {move_list(board)}")
     except (KeyboardInterrupt, EOFError):
