@@ -20,6 +20,32 @@ python3 -m venv .venv
 .venv/bin/pip install chess
 ```
 
+### Installing Stockfish on Windows
+
+Use a package manager (this puts `stockfish` on your `PATH`):
+
+```powershell
+scoop install stockfish
+# or
+choco install stockfish
+# or (if available in your winget catalog; check with `winget search stockfish`)
+winget install Stockfish.Stockfish
+```
+
+Or install manually:
+
+1. Download the Windows build from https://stockfishchess.org/download/ (pick the AVX2 build on any CPU from the last ~10 years, otherwise the plain x86-64 build).
+2. Unzip it somewhere permanent, e.g. `C:\Tools\stockfish\`.
+3. Either add that folder to your `PATH` (Settings → System → About → Advanced system settings → Environment Variables → Path), or pass the exe with `--engine`:
+
+```powershell
+python blindfold.py --engine C:\Tools\stockfish\stockfish-windows-x86-64-avx2.exe
+```
+
+Check it works by running `stockfish` in a new terminal; it should print a banner and wait for input (type `quit` to exit).
+
+On Windows, create the venv with `python -m venv .venv` and run `.venv\Scripts\python blindfold.py` in place of `.venv/bin/python`.
+
 ## Play
 
 ```bash
